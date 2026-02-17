@@ -1,0 +1,29 @@
+name: 🧪 TEST build GH Pages (Reusable)
+
+on:
+  workflow_call:
+    secrets:
+      GH_ACTIONS_TOKEN:
+        required: true
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_ACTIONS_TOKEN }}
+          submodules: true
+          fetch-depth: 0
+
+      - name: Setup Hugo
+        uses: peaceiris/actions-hugo@v3
+        with:
+          hugo-version: 'latest'
+          extended: true
+
+      - name: Test build
+        run: hugo --minify --baseURL "http://example.local/"
