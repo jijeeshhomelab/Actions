@@ -1,4 +1,4 @@
-name: 🧪 TEST build GH Pages (Reusable)
+name: TEST build GH Pages (DEV)
 
 on:
   workflow_call:
@@ -7,11 +7,8 @@ on:
         required: true
 
 jobs:
-  test-build:
+  create-pages:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -19,9 +16,17 @@ jobs:
           submodules: true
           fetch-depth: 0
 
-      - uses: peaceiris/actions-hugo@v3
+      - name: Modify ace shortcodes
+        run: sed -i 's/\.Title/\.File\.BaseFileName | humanize | title/' themes/aec-documentation/layouts/shortcodes/childpages.html
+
+      - name: Modify navbar
+        run: sed -i 's/\.LinkTitle/\.File\.BaseFileName | humanize | title/' themes/aec-documentation/layouts/partials/menu.html
+
+      - name: Setup Hugo
+        uses: peaceiris/actions-hugo@v3
         with:
           hugo-version: 'latest'
           extended: true
 
-      - run: hugo --minify --baseURL "http://example.local/"
+      - name: Build
+        run: hugo --minify
