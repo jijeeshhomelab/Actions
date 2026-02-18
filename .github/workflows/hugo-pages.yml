@@ -15,26 +15,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) CHECKOUT
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      # Checkout source repo + submodules
+      - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GH_ACTIONS_TOKEN }}
           submodules: true
           fetch-depth: 0
 
-      # 2) THEME PATCHES
+      # Patch shortcodes
       - name: Patch childpages shortcode
         run: |
-          sed -i 's/\.Title/\.File\.BaseFileName | humanize | title/' themes/aec-documentation/layouts/shortcodes/childpages.html
+          sed -i 's/\.Title/\.File\.BaseFileName | humanize | title/' \
+            themes/aec-documentation/layouts/shortcodes/childpages.html
 
-      - name: Patch menu partial
+      # Patch menu
+      - name: Patch sidebar menu rendering
         run: |
-          sed -i 's/\.LinkTitle/\.File\.BaseFileName | humanize | title/' themes/aec-documentation/layouts/partials/menu.html
+          sed -i 's/\.LinkTitle/\.File\.BaseFileName | humanize | title/' \
+            themes/aec-documentation/layouts/partials/menu.html
 
+      # Create markup hook directory
       - name: Ensure markup hook directory
-        run: mkdir -p themes/aec-documentation/layouts/_default/_markup
+        run: mkdir -p "themes/aec-documentation/layouts/_default/_markup"
 
+      # Markdown render hook
       - name: Create markdown link render hook
         run: |
           cat << 'EOF' > themes/aec-documentation/layouts/_default/_markup/render-link.html
@@ -44,9 +48,10 @@ jobs:
           {{- if and (not $isRemote) (strings.HasSuffix $url.Path ".md") }}
             {{- $link = relref .Page $link }}
           {{- end -}}
-          {{ $link | safeURL }}{{ .Text | safeHTML }}</a>
+          <a href="{{ $link | safeURL }}"{{ with .Title }} title="{{ . }}"{{ end }}{{ if $isRemote }} target="_blank"{{ end }}>{{ .Text | safeHTML }}</a>
           EOF
 
+      # Mermaid support
       - name: Create mermaid render hook
         run: |
           cat << 'EOF' > themes/aec-documentation/layouts/_default/_markup/render-codeblock-mermaid.html
@@ -56,79 +61,91 @@ jobs:
           {{ .Page.Store.Set "hasMermaid" true }}
           EOF
 
-      - name: Inject mermaid snippet
+      - name: Create mermaid snippet
         run: |
           cat << 'EOF' > /tmp/mermaid.snippet
           {{ if .Page.Store.Get "hasMermaid" }}
-            https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js</script>
+            <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
             <script>mermaid.initialize({ startOnLoad: true });</script>
           {{ end }}
           EOF
-          sed -i '/{{ .Content }}/r /tmp/mermaid.snippet' themes/aec-documentation/layouts/_default/single.html
 
-      # 3) BUILD HUGO
+      - name: Inject mermaid into single.html
+        run: |
+          sed -i '/{{ .Content }}/r /tmp/mermaid.snippet' \
+            themes/aec-documentation/layouts/_default/single.html
+
+      # Create section indexes (production behavior)
+      - name: Create design/_index.md
+        run: |
+          cat << 'EOF' > design/_index.md
+          ---
+          title: Design Documents
+          ---
+          {{< childpages >}}
+          EOF
+
+      - name: Create workInstructions/_index.md
+        run: |
+          cat << 'EOF' > workInstructions/_index.md
+          ---
+          title: Work Instructions
+          ---
+          {{< childpages >}}
+          EOF
+
+      # Replace VERSION token
+      - name: Apply version token to main/_index.md
+        run: sed -i 's/VERSION/${{ inputs.GH_BRANCH }}/' main/_index.md
+
+      # Build Hugo
       - name: Setup Hugo
         uses: peaceiris/actions-hugo@v3
         with:
           hugo-version: 'latest'
           extended: true
 
-      - name: Build site
+      - name: Build
         run: hugo --minify
 
-      # 4) ASSEMBLE PUBLISH DIRECTORY
-      - name: Prepare publish folder
-        run: |
-          set -e
-          rm -rf publish && mkdir publish
-          git fetch origin hugo-pages || true
-
-          if git ls-remote --exit-code origin hugo-pages; then
-            git checkout -b hg-pages-tmp origin/hugo-pages
-            rsync -av --delete --exclude='.git' ./ ./publish/ || true
-          fi
-
-          mkdir -p ./publish/${{ inputs.GH_BRANCH }}
-          rsync -av --delete ./public/ ./publish/${{ inputs.GH_BRANCH }}/
-
-      # 5) GENERATE ROOT INDEX.HTML
-      - name: Generate root index.html
-        run: |
-          cd publish
-          versions=$(find . -maxdepth 1 -type d ! -name '.' ! -name '.git' | sed 's|^\./||' | sort)
-
-          cat > index.html << 'EOF'
-          <!doctype html>
-          <html>
-          <head>
-            <meta charset="utf-8"/>
-            <title>DHC Documentation</title>
-            <style>
-              body{font-family:sans-serif;margin:2rem;}
-              a{color:#0a58ca;text-decoration:none;}
-              a:hover{text-decoration:underline;}
-            </style>
-          </head>
-          <body>
-            <h1>DHC Documentation</h1>
-            <p>Choose a documentation release / branch</p>
-            <ul>
-          EOF
-
-          for v in $versions; do
-            echo "<li><a href=\"./$v/\">$v</a></li>" >> index.html
-          done
-
-          cat >> index.html << 'EOF'
-            </ul>
-          </body>
-          </html>
-          EOF
-
-      # 6) DEPLOY
-      - name: Deploy to GitHub Pages (hugo-pages branch)
+      # DEPLOY (Production method)
+      # Only upload the build output for THIS branch into the hugo-pages/<branch> folder
+      - name: Deploy
         uses: peaceiris/actions-gh-pages@v4
         with:
           personal_token: ${{ secrets.GH_ACTIONS_TOKEN }}
           publish_branch: hugo-pages
-          publish_dir: publish
+          destination_dir: ${{ inputs.GH_BRANCH }}
+          publish_dir: public
+          external_repository: jijeeshhomelab/learningrepo
+
+  # GitHub Pages deployment job
+  deploy-pages:
+    needs: create-pages
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout hugo-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: hugo-pages
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
