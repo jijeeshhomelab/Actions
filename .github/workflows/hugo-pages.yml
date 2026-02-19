@@ -6,12 +6,10 @@ on:
       GH_BRANCH:
         type: string
         required: true
-    secrets:
-      GH_ACTIONS_TOKEN:
-        required: false
-      # If your theme submodule is private and uses HTTPS, provide a PAT with repo scope from the caller:
-      # PRIVATE_SUBMODULE_PAT:
-      #   required: false
+    # Uncomment if you need a PAT for private submodules (HTTPS URLs)
+    # secrets:
+    #   PRIVATE_SUBMODULE_PAT:
+    #     required: false
 
 jobs:
   build:
@@ -25,55 +23,43 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
-          # If your theme submodule is PRIVATE over HTTPS, uncomment:
+          # If your theme submodule is PRIVATE via HTTPS, uncomment:
           # token: ${{ secrets.PRIVATE_SUBMODULE_PAT }}
 
-      - name: Initialize submodules (belt-and-suspenders)
+      - name: Initialize submodules
         run: |
           git submodule sync --recursive
           git submodule update --init --recursive
 
-      - name: Ensure theme is enabled in config.* (best-effort)
+      - name: Ensure theme is set (best-effort)
         shell: bash
         run: |
-          set -e
           if [ -f config.toml ]; then
-            if ! grep -qiE '^\s*theme\s*=\s*"ace-documentation"' config.toml; then
-              echo 'theme = "ace-documentation"' >> config.toml
-              echo "Added theme to config.toml"
-            else
-              echo "Theme already set in config.toml"
-            fi
+            grep -qiE '^\s*theme\s*=\s*"ace-documentation"' config.toml || echo 'theme = "ace-documentation"' >> config.toml
           elif [ -f config.yaml ] || [ -f config.yml ]; then
-            yml=$(ls config.y*ml | head -n 1)
-            if ! grep -qiE '^\s*theme:\s*ace-documentation' "$yml"; then
-              echo 'theme: ace-documentation' >> "$yml"
-              echo "Added theme to $yml"
-            else
-              echo "Theme already set in $yml"
-            fi
+            yml="$(ls config.y*ml | head -n 1)"
+            grep -qiE '^\s*theme:\s*ace-documentation' "$yml" || echo 'theme: ace-documentation' >> "$yml"
           elif [ -f config.json ]; then
             python - << 'PY'
-import json, sys
+import json
 p='config.json'
 with open(p) as f: data=json.load(f)
 if data.get('theme')!='ace-documentation':
     data['theme']='ace-documentation'
     with open(p,'w') as f: json.dump(data,f,indent=2)
-    print("Added theme to config.json")
-else:
-    print("Theme already set in config.json")
 PY
           else
-            echo 'baseURL = "/"' > config.toml
-            echo 'languageCode = "en-us"' >> config.toml
-            echo 'title = "Site"' >> config.toml
-            echo 'theme = "ace-documentation"' >> config.toml
-            echo "Created minimal config.toml with theme"
+            cat > config.toml <<'EOF'
+baseURL = "/"
+languageCode = "en-us"
+title = "Site"
+theme = "ace-documentation"
+EOF
           fi
 
-      # 🔴 IMPORTANT: Create section index files WITHOUT shortcodes.
-      - name: Create design/_index.md (no shortcode)
+      # Create section index files WITHOUT shortcodes (to avoid "childpages" error)
+      - name: Create design/_index.md
+        shell: bash
         run: |
           mkdir -p design
           cat << 'EOF' > design/_index.md
@@ -83,7 +69,8 @@ title: "Design Documentation"
 Please use the links or the sidebar to navigate.
 EOF
 
-      - name: Create workInstructions/_index.md (no shortcode)
+      - name: Create workInstructions/_index.md
+        shell: bash
         run: |
           mkdir -p workInstructions
           cat << 'EOF' > workInstructions/_index.md
@@ -93,14 +80,11 @@ title: "Work Instructions"
 Please use the links or the sidebar to navigate.
 EOF
 
-      # ✅ Replace VERSION with branch name in your main/_index.md (your production pattern)
-      - name: Append the branch/version name to main/_index.md
+      - name: Replace VERSION in main/_index.md
+        shell: bash
         run: |
           if [ -f main/_index.md ]; then
             sed -i "s/VERSION/${{ inputs.GH_BRANCH }}/" main/_index.md || true
-            echo "Patched VERSION in main/_index.md"
-          else
-            echo "main/_index.md not found; skipping VERSION replacement"
           fi
 
       - name: Setup Hugo
@@ -112,7 +96,6 @@ EOF
       - name: Build
         run: hugo --minify
 
-      # 🔵 Use artifact-based Pages deploy (recommended)
       - name: Upload artifact for Pages
         uses: actions/upload-pages-artifact@v3
         with:
@@ -121,7 +104,6 @@ EOF
   deploy-pages:
     needs: build
     runs-on: ubuntu-latest
-    # The caller must grant these permissions in the job that "uses:" this workflow.
     permissions:
       pages: write
       id-token: write
