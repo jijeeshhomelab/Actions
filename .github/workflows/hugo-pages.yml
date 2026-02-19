@@ -1,4 +1,4 @@
-name: 📖 Deploy GitHub Pages Using Hugo
+name: 📖 Build Hugo Site
 
 on:
   workflow_call:
@@ -6,26 +6,20 @@ on:
       GH_BRANCH:
         type: string
         required: true
-    # Optional: If your theme submodule is private, accept a PAT
-    # secrets:
-    #   PRIVATE_SUBMODULE_PAT:
-    #     required: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
-    # Only read is needed here
     permissions:
       contents: read
 
     steps:
-      - name: Checkout caller repository (with submodules)
+      - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
-          # If your theme submodule is PRIVATE (HTTPS URL) and needs a PAT, uncomment:
+          # If the theme submodule is private (HTTPS URL), provide a PAT via secrets & uncomment:
           # token: ${{ secrets.PRIVATE_SUBMODULE_PAT }}
 
       - name: Initialize submodules (belt-and-suspenders)
@@ -63,7 +57,7 @@ jobs:
           {{- if and (not $isRemote) (strings.HasSuffix $url.Path ".md") }}
             {{- $link = relref .Page $link }}
           {{- end -}}
-          <a href="{{ $link | safeURL }}"{{ with .Title}} title="{{ . }}"{{ end }}{{ if $isRemote }} target="_blank"{{ end }}>{{ .Text | safeHTML }}</a>
+          {{ $link | safeURL }}{{ .Text | safeHTML }}</a>
           EOF
 
       - name: Create a mermaid render hook
@@ -79,14 +73,12 @@ jobs:
         run: |
           cat << 'EOF' > /tmp/mermaid.snippet
           {{ if .Page.Store.Get "hasMermaid" }}
-            <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
-            <script>
-              mermaid.initialize({ startOnLoad: true });
-            </script>
+            https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js</script>
+            <script>mermaid.initialize({ startOnLoad: true });</script>
           {{ end }}
           EOF
 
-      - name: Insert mermaid snippet into docs theme (best-effort)
+      - name: Insert mermaid snippet (best-effort)
         run: sed -i '/{{ .Content }}/r /tmp/mermaid.snippet' "${GITHUB_WORKSPACE}/themes/ace-documentation/layouts/_default/single.html" || true
 
       - name: Create _index.md (Design)
@@ -109,7 +101,7 @@ jobs:
           {{< childpages >}}
           EOF
 
-      - name: Append the branch/version name to index.md
+      - name: Append branch/version name
         run: sed -i "s/VERSION/${{ inputs.GH_BRANCH }}/" main/_index.md || true
 
       - name: Setup Hugo
@@ -121,29 +113,8 @@ jobs:
       - name: Build
         run: hugo --minify
 
-      # Upload built site for Pages deploy
-      - name: Upload artifact for Pages
-        uses: actions/upload-pages-artifact@v3
+      - name: Upload built site as artifact
+        uses: actions/upload-artifact@v4
         with:
+          name: hugo-site
           path: public
-
-  deploy-pages:
-    needs: build
-    runs-on: ubuntu-latest
-
-    # These are required for Pages; caller must grant them (see caller file below)
-    permissions:
-      pages: write
-      id-token: write
-
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    steps:
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
