@@ -1,4 +1,4 @@
-name: 📖 Build Hugo Site
+name: 📖 Deploy GitHub Pages Using Hugo
 
 on:
   workflow_call:
@@ -6,6 +6,12 @@ on:
       GH_BRANCH:
         type: string
         required: true
+    secrets:
+      GH_ACTIONS_TOKEN:
+        required: false
+      # If your theme submodule is private and uses HTTPS, provide a PAT with repo scope from the caller:
+      # PRIVATE_SUBMODULE_PAT:
+      #   required: false
 
 jobs:
   build:
@@ -14,12 +20,12 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout caller repository (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
-          # If the theme submodule is private (HTTPS URL), provide a PAT via secrets & uncomment:
+          # If your theme submodule is PRIVATE over HTTPS, uncomment:
           # token: ${{ secrets.PRIVATE_SUBMODULE_PAT }}
 
       - name: Initialize submodules (belt-and-suspenders)
@@ -27,82 +33,75 @@ jobs:
           git submodule sync --recursive
           git submodule update --init --recursive
 
-      - name: Patch shortcode to not require page title
+      - name: Ensure theme is enabled in config.* (best-effort)
+        shell: bash
         run: |
-          file="${GITHUB_WORKSPACE}/themes/ace-documentation/layouts/shortcodes/childpages.html"
-          if [ -f "$file" ]; then
-            sed -i 's/\.Title/\.File\.BaseFileName | humanize | title/' "$file"
+          set -e
+          if [ -f config.toml ]; then
+            if ! grep -qiE '^\s*theme\s*=\s*"ace-documentation"' config.toml; then
+              echo 'theme = "ace-documentation"' >> config.toml
+              echo "Added theme to config.toml"
+            else
+              echo "Theme already set in config.toml"
+            fi
+          elif [ -f config.yaml ] || [ -f config.yml ]; then
+            yml=$(ls config.y*ml | head -n 1)
+            if ! grep -qiE '^\s*theme:\s*ace-documentation' "$yml"; then
+              echo 'theme: ace-documentation' >> "$yml"
+              echo "Added theme to $yml"
+            else
+              echo "Theme already set in $yml"
+            fi
+          elif [ -f config.json ]; then
+            python - << 'PY'
+import json, sys
+p='config.json'
+with open(p) as f: data=json.load(f)
+if data.get('theme')!='ace-documentation':
+    data['theme']='ace-documentation'
+    with open(p,'w') as f: json.dump(data,f,indent=2)
+    print("Added theme to config.json")
+else:
+    print("Theme already set in config.json")
+PY
           else
-            echo "Skipping: $file not found"
+            echo 'baseURL = "/"' > config.toml
+            echo 'languageCode = "en-us"' >> config.toml
+            echo 'title = "Site"' >> config.toml
+            echo 'theme = "ace-documentation"' >> config.toml
+            echo "Created minimal config.toml with theme"
           fi
 
-      - name: Patch left navbar to not require page title
-        run: |
-          file="${GITHUB_WORKSPACE}/themes/ace-documentation/layouts/partials/menu.html"
-          if [ -f "$file" ]; then
-            sed -i 's/\.LinkTitle/\.File\.BaseFileName | humanize | title/' "$file"
-          else
-            echo "Skipping: $file not found"
-          fi
-
-      - name: Ensure markup directory exists
-        run: mkdir -p "${GITHUB_WORKSPACE}/themes/ace-documentation/layouts/_default/_markup"
-
-      - name: Create a markdown link render hook
-        run: |
-          cat << 'EOF' > "${GITHUB_WORKSPACE}/themes/ace-documentation/layouts/_default/_markup/render-link.html"
-          {{- $link := .Destination }}
-          {{- $url := urls.Parse $link }}
-          {{- $isRemote := $url.IsAbs }}
-          {{- if and (not $isRemote) (strings.HasSuffix $url.Path ".md") }}
-            {{- $link = relref .Page $link }}
-          {{- end -}}
-          {{ $link | safeURL }}{{ .Text | safeHTML }}</a>
-          EOF
-
-      - name: Create a mermaid render hook
-        run: |
-          cat << 'EOF' > "${GITHUB_WORKSPACE}/themes/ace-documentation/layouts/_default/_markup/render-codeblock-mermaid.html"
-          <div class="mermaid">
-            {{- .Inner | safeHTML }}
-          </div>
-          {{ .Page.Store.Set "hasMermaid" true }}
-          EOF
-
-      - name: Store mermaid config in temp file
-        run: |
-          cat << 'EOF' > /tmp/mermaid.snippet
-          {{ if .Page.Store.Get "hasMermaid" }}
-            https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js</script>
-            <script>mermaid.initialize({ startOnLoad: true });</script>
-          {{ end }}
-          EOF
-
-      - name: Insert mermaid snippet (best-effort)
-        run: sed -i '/{{ .Content }}/r /tmp/mermaid.snippet' "${GITHUB_WORKSPACE}/themes/ace-documentation/layouts/_default/single.html" || true
-
-      - name: Create _index.md (Design)
+      # 🔴 IMPORTANT: Create section index files WITHOUT shortcodes.
+      - name: Create design/_index.md (no shortcode)
         run: |
           mkdir -p design
           cat << 'EOF' > design/_index.md
-          ---
-          title: Design Documents
-          ---
-          {{< childpages >}}
-          EOF
+---
+title: "Design Documentation"
+---
+Please use the links or the sidebar to navigate.
+EOF
 
-      - name: Create _index.md (Work Instructions)
+      - name: Create workInstructions/_index.md (no shortcode)
         run: |
           mkdir -p workInstructions
           cat << 'EOF' > workInstructions/_index.md
-          ---
-          title: Work Instructions
-          ---
-          {{< childpages >}}
-          EOF
+---
+title: "Work Instructions"
+---
+Please use the links or the sidebar to navigate.
+EOF
 
-      - name: Append branch/version name
-        run: sed -i "s/VERSION/${{ inputs.GH_BRANCH }}/" main/_index.md || true
+      # ✅ Replace VERSION with branch name in your main/_index.md (your production pattern)
+      - name: Append the branch/version name to main/_index.md
+        run: |
+          if [ -f main/_index.md ]; then
+            sed -i "s/VERSION/${{ inputs.GH_BRANCH }}/" main/_index.md || true
+            echo "Patched VERSION in main/_index.md"
+          else
+            echo "main/_index.md not found; skipping VERSION replacement"
+          fi
 
       - name: Setup Hugo
         uses: peaceiris/actions-hugo@v3
@@ -113,8 +112,28 @@ jobs:
       - name: Build
         run: hugo --minify
 
-      - name: Upload built site as artifact
-        uses: actions/upload-artifact@v4
+      # 🔵 Use artifact-based Pages deploy (recommended)
+      - name: Upload artifact for Pages
+        uses: actions/upload-pages-artifact@v3
         with:
-          name: hugo-site
           path: public
+
+  deploy-pages:
+    needs: build
+    runs-on: ubuntu-latest
+    # The caller must grant these permissions in the job that "uses:" this workflow.
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
