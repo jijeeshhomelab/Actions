@@ -1,4 +1,4 @@
-name: 📖 Deploy GitHub Pages Using Hugo
+name: Deploy GitHub Pages Using Hugo
 
 on:
   workflow_call:
@@ -6,7 +6,7 @@ on:
       GH_BRANCH:
         type: string
         required: true
-    # Uncomment if you need a PAT for private submodules (HTTPS URLs)
+    # If your theme submodule is private over HTTPS, you can accept a PAT from the caller:
     # secrets:
     #   PRIVATE_SUBMODULE_PAT:
     #     required: false
@@ -18,70 +18,22 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout caller repository (with submodules)
+      - name: Checkout repository (with submodules)
         uses: actions/checkout@v4
         with:
-          submodules: recursive
           fetch-depth: 0
-          # If your theme submodule is PRIVATE via HTTPS, uncomment:
+          submodules: recursive
+          # If the theme submodule is PRIVATE via HTTPS, uncomment:
           # token: ${{ secrets.PRIVATE_SUBMODULE_PAT }}
 
-      - name: Initialize submodules
+      - name: Initialize submodules (recursive)
         run: |
           git submodule sync --recursive
           git submodule update --init --recursive
 
-      - name: Ensure theme is set (best-effort)
-        shell: bash
-        run: |
-          if [ -f config.toml ]; then
-            grep -qiE '^\s*theme\s*=\s*"ace-documentation"' config.toml || echo 'theme = "ace-documentation"' >> config.toml
-          elif [ -f config.yaml ] || [ -f config.yml ]; then
-            yml="$(ls config.y*ml | head -n 1)"
-            grep -qiE '^\s*theme:\s*ace-documentation' "$yml" || echo 'theme: ace-documentation' >> "$yml"
-          elif [ -f config.json ]; then
-            python - << 'PY'
-import json
-p='config.json'
-with open(p) as f: data=json.load(f)
-if data.get('theme')!='ace-documentation':
-    data['theme']='ace-documentation'
-    with open(p,'w') as f: json.dump(data,f,indent=2)
-PY
-          else
-            cat > config.toml <<'EOF'
-baseURL = "/"
-languageCode = "en-us"
-title = "Site"
-theme = "ace-documentation"
-EOF
-          fi
-
-      # Create section index files WITHOUT shortcodes (to avoid "childpages" error)
-      - name: Create design/_index.md
-        shell: bash
-        run: |
-          mkdir -p design
-          cat << 'EOF' > design/_index.md
----
-title: "Design Documentation"
----
-Please use the links or the sidebar to navigate.
-EOF
-
-      - name: Create workInstructions/_index.md
-        shell: bash
-        run: |
-          mkdir -p workInstructions
-          cat << 'EOF' > workInstructions/_index.md
----
-title: "Work Instructions"
----
-Please use the links or the sidebar to navigate.
-EOF
-
+      # Keep the site exactly like production: no childpages shortcode anywhere.
+      # We only replace VERSION in main/_index.md if present.
       - name: Replace VERSION in main/_index.md
-        shell: bash
         run: |
           if [ -f main/_index.md ]; then
             sed -i "s/VERSION/${{ inputs.GH_BRANCH }}/" main/_index.md || true
@@ -90,10 +42,10 @@ EOF
       - name: Setup Hugo
         uses: peaceiris/actions-hugo@v3
         with:
-          hugo-version: 'latest'
+          hugo-version: latest
           extended: true
 
-      - name: Build
+      - name: Build site
         run: hugo --minify
 
       - name: Upload artifact for Pages
