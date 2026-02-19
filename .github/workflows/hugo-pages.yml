@@ -101,7 +101,7 @@ jobs:
           personal_token: ${{ secrets.GH_ACTIONS_TOKEN }}
           publish_branch: hugo-pages
           destination_dir: ${{ inputs.GH_BRANCH }} # whatever branch the PR was merged onto
-          external_repository: jijeeshlab/learningrepo
+          external_repository: jijeeshhomelab/learningrepo
   deploy-pages:
     needs: create-pages
     environment:
